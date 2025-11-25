@@ -4,13 +4,30 @@ A Classification Project showcasing Data Science techniques to identify promoter
 ## 🎯 Project Goal
 The objective of this project was to develop a high-accuracy Machine Learning model to classify DNA sequences as either **promoter regions** or **non-promoter regions**. Promoter regions are critical sequences near transcription start sites that regulate gene transcription.
 
+
+## 📸 Report Visuals (Screenshots)
+SEE FULL REPORT FOR MORE 
+
+[Link to Full Report](promoterclassification.html)
+![](screenshots/intro.png)
+![](screenshots/calculations.png)
+![](screenshots/feat_1.png)
+![](screenshots/vis1.png)
+![](screenshots/vis2.png)
+![](screenshots/vis3.png)
+![](screenshots/models1.png)
+![](screenshots/models2.png)
+![](screenshots/models3.png)
+![](screenshots/models4.png)
+![](screenshots/models5.png)
+![](screenshots/models6.png)
+---
+
+
 ### 📈 Final Model Performance
 | Model | Metric | Value (e.g., ROC AUC) |
 | :--- | :--- | :--- |
 | **Random Forest** | **ROC AUC** | **0.97** |
-
-[Link to Full Report](promoterclassification.html)
----
 
 ## 🔬 Data Science Methodology
 
