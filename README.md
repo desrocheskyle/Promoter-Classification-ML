@@ -7,8 +7,7 @@ The objective of this project was to develop a high-accuracy Machine Learning mo
 ### 📈 Final Model Performance
 | Model | Metric | Value (e.g., ROC AUC) |
 | :--- | :--- | :--- |
-| **[Winning Model Name]** | **ROC AUC** | **[Insert Your Best Score]** |
-| [Second Best Model] | ROC AUC | [Insert Second Best Score] |
+| **Random Forest** | **ROC AUC** | **0.97** |
 
 [Link to Full Report](promoterclassification.html)
 ---
