@@ -1,0 +1,715 @@
+---
+title: "Promoter Region Classification"
+author: "Kyle Desroches - UCSB Spring 2024"
+subtitle: Using ML Models to Classify a Sequence of DNA as a Promoter Region
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+The objective of this project is to develop a machine learning model that can classify DNA sequences as either promoter regions or non-promoter regions. Promoter regions, located near transcription start sites, play a crucial role in regulating gene transcription by controlling the binding of RNA polymerase. Thus, recognizing promoter regions is a significant area of interest in bioinformatics. Using a dataset from Kaggle that includes various DNA sequences, this project will implement multiple machine learning techniques to hopefully create a highly accurate model for identifying promoter regions.
+
+## Data Description
+
+The dataset for this project is sourced from Kaggle and comprises two CSV files: one containing 30,000 DNA sequences identified as promoter regions and another containing 30,000 DNA sequences identified as non-promoter regions. Additionally, there is a TSV file that provides bendability scores for various 3-mers, which will be used to engineer features in the final dataset. The dataset can be accessed here: [Kaggle - Promoter or Not Bioinformatics Dataset](https://www.kaggle.com/datasets/samira1992/promoter-or-not-bioinformatics-dataset)
+
+## Project Outline
+
+The project will proceed as follows:
+
+Data Exploration and Feature Engineering:
+
+-   Investigate the contents of the Kaggle dataset
+
+-   Calculate nucleotide proportions for each sequence
+
+-   Engineer new features such as CpG islands, which are indicative of promoter regions
+
+-   Analyze the average bendability of each sequence as a potential predictive feature
+
+Dataset Consolidation:
+
+-   Combine the engineered features and findings into a final dataset
+
+Model Building:
+
+-   Develop and evaluate various classification models using the consolidated dataset to determine the most accurate model for identifying promoter regions
+
+Throughout this project, the focus will be on leveraging the data set to its fullest potential by incorporating sophisticated feature engineering and applying robust machine learning techniques to achieve the best possible classification performance.
+
+# Exploratory Data Analysis
+
+## Loading Packages
+
+First, we will load all the necessary packages we will be working with throughout this project.
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(naniar)
+library(gridExtra)
+library(BiocManager)
+library(stringr)
+library(MASS)
+library(parsnip)
+library(discrim)
+library(kernlab)
+library(caret)
+```
+
+## Reading in Data
+
+Next, we read in the data we got from the Kaggle dataset and make sure there is no missing data.
+
+```{r}
+promoterdf <- read.csv("promoterdata/promoter.csv")
+non_promoterdf <- read.csv("promoterdata/non_promoter.csv")
+bendability <- read.table("promoterdata/bendability.tsv", sep="\t", header=TRUE)
+
+vis_miss(promoterdf)
+vis_miss(non_promoterdf)
+vis_miss(bendability)
+```
+
+As we can see by the visualization, all data is present.
+
+## Calculating Proportion of Nucleotides
+
+Each observation is one long sequence of nucleotides. To make it easier to work with we will convert each sequence into 4 separate features, each pertaining to the proportion of the sequence that is that nucleotide.
+
+```{r}
+#function that will convert the DNA sequence to nucleotide proportions
+calculate_nucleotide_proportions <- function(sequence) {
+  total_length <- nchar(sequence)
+  
+  count_A <- sum(charToRaw(sequence) == charToRaw('A'))
+  count_C <- sum(charToRaw(sequence) == charToRaw('C'))
+  count_G <- sum(charToRaw(sequence) == charToRaw('G'))
+  count_T <- sum(charToRaw(sequence) == charToRaw('T'))
+  
+  prop_A <- count_A / total_length
+  prop_C <- count_C / total_length
+  prop_G <- count_G / total_length
+  prop_T <- count_T / total_length
+  
+  c(A = prop_A, C = prop_C, G = prop_G, T = prop_T)
+}
+```
+
+```{r}
+#Applying our function and creating new dataframes containing the proportions
+nprops_promotermatrix <- t(sapply(promoterdf$Promoter.sequences, calculate_nucleotide_proportions))
+
+nprops_promoter <- as.data.frame(nprops_promotermatrix)
+
+nprops_nopromotermatrix <- t(sapply(non_promoterdf$non.Promoter.sequences, calculate_nucleotide_proportions))
+
+nprops_nopromoter <- as.data.frame(nprops_nopromotermatrix)
+```
+
+```{r}
+# For promoter sequences
+nprops_promoter <- nprops_promoter %>%
+  mutate(Promoter.sequences = row_number()) %>%
+  dplyr::select(c("Promoter.sequences", "A", "C", "G", "T"))
+
+# Remove row names
+rownames(nprops_promoter) <- NULL
+
+# For non-promoter sequences
+nprops_nopromoter <- nprops_nopromoter %>%
+  mutate(non.Promoter.sequences = row_number()) %>%
+  dplyr::select(c("non.Promoter.sequences", "A", "C", "G", "T"))
+
+# Remove row names
+rownames(nprops_nopromoter) <- NULL
+```
+
+### Visualizing Nucleotide Proportions
+
+Now we can create histograms of the proportions of each nucleotide to see how these proportions may differ in promoter regions vs non-promoter regions.
+
+```{r}
+#Histograms for nucleotide proportions in promoter regions
+hist_A <- ggplot(nprops_promoter, aes(x = A)) +
+  geom_histogram(binwidth = 0.05, fill = "darkblue", color = "black") +
+  labs(title = "Proportion of A", x = "Proportion", y = "Count")
+
+hist_T <- ggplot(nprops_promoter, aes(x = T)) +
+  geom_histogram(binwidth = 0.05, fill = "red", color = "black") +
+  labs(title = "Proportion of T", x = "Proportion", y = "Count")
+
+hist_C <- ggplot(nprops_promoter, aes(x = C)) +
+  geom_histogram(binwidth = 0.05, fill = "green", color = "black") +
+  labs(title = "Proportion of C", x = "Proportion", y = "Count")
+
+hist_G <- ggplot(nprops_promoter, aes(x = G)) +
+  geom_histogram(binwidth = 0.05, fill = "purple", color = "black") +
+  labs(title = "Proportion of G", x = "Proportion", y = "Count")
+
+grid.arrange(hist_A, hist_T, hist_C, hist_G, nrow = 2, ncol = 2)
+```
+
+```{r}
+#Histograms for nucleotide proportions in non-promoter regions
+hist_AA <- ggplot(nprops_nopromoter, aes(x = A)) +
+  geom_histogram(binwidth = 0.05, fill = "darkblue", color = "black") +
+  labs(title = "Proportion of A", x = "Proportion", y = "Count")
+
+hist_TT <- ggplot(nprops_nopromoter, aes(x = T)) +
+  geom_histogram(binwidth = 0.05, fill = "red", color = "black") +
+  labs(title = "Proportion of T", x = "Proportion", y = "Count")
+
+hist_CC <- ggplot(nprops_nopromoter, aes(x = C)) +
+  geom_histogram(binwidth = 0.05, fill = "green", color = "black") +
+  labs(title = "Proportion of C", x = "Proportion", y = "Count")
+
+hist_GG <- ggplot(nprops_nopromoter, aes(x = G)) +
+  geom_histogram(binwidth = 0.05, fill = "purple", color = "black") +
+  labs(title = "Proportion of G", x = "Proportion", y = "Count")
+
+grid.arrange(hist_AA, hist_TT, hist_CC, hist_GG, nrow = 2, ncol = 2)
+```
+
+Through this visualization, it is evident that promoter regions tend to have a slightly higher proportion of G and C nucleotides compared to non-promoter regions. Additionally, non-promoter regions exhibit a greater prevalence of sequences with higher proportions of T nucleotides. These differences in nucleotide proportions between promoter and non-promoter sequences highlight a key feature that can be utilized for classifying DNA sequences.
+
+## Feature Engineering: CpG Islands
+
+Next, we will engineer a new feature for our final data set called CpG Islands. CpG islands are DNA regions with a high frequency of cytosine and guanine nucleotides, typically located near gene transcription start sites. They play a crucial role in gene regulation, transcriptional activation, and epigenetic modifications. Their presence in promoter regions, characterized by higher GC content and distinct observed-to-expected CpG ratios, makes them key markers for identifying active promoter regions. Thus, I will utilize these characteristics in my classification model to significantly enhance the accuracy of distinguishing promoter sequences from non-promoter sequences.
+
+```{r}
+#Function to calcualte the GC content found in each sequence
+calculate_gc_content <- function(sequence) {
+  gc_count <- str_count(sequence, "[GC]")
+  gc_content <- gc_count / nchar(sequence)
+  return(gc_content)
+}
+
+# Function to calculate observed-to-expected CpG ratio
+calculate_obs_exp_cpg <- function(sequence) {
+  cpg_count <- str_count(sequence, "CG")
+  expected_c <- str_count(sequence, "C") / nchar(sequence)
+  expected_g <- str_count(sequence, "G") / nchar(sequence)
+  exp_cpg <- expected_c * expected_g * nchar(sequence)
+  obs_exp_ratio <- cpg_count / exp_cpg
+  return(obs_exp_ratio)
+}
+
+#This function will find the number of CpG islands in each DNA sequence in the dataset
+find_cpg_islands <- function(sequence, window_size = 200, min_gc_content = 0.5, min_obs_exp = 0.6) {
+  sequence_length <- nchar(sequence)
+  cpg_island_count <- 0
+  
+  for (start in 1:(sequence_length - window_size + 1)) {
+    window <- substr(sequence, start, start + window_size - 1)
+    gc_content <- calculate_gc_content(window)
+    obs_exp_ratio <- calculate_obs_exp_cpg(window)
+    
+    # Check for NA values
+    if (!is.na(gc_content) && !is.na(obs_exp_ratio)) {
+      if (gc_content >= min_gc_content && obs_exp_ratio >= min_obs_exp) {
+        cpg_island_count <- cpg_island_count + 1
+      }
+    }
+  }
+  
+  return(cpg_island_count)
+}
+```
+
+```{r}
+#Applying the find_cpg_islands function to identify how many CpG islands are in each sequence
+promoterdf$num_cpg_islands <- sapply(promoterdf$Promoter.sequences, find_cpg_islands)
+non_promoterdf$num_cpg_islands <- sapply(non_promoterdf$non.Promoter.sequences, find_cpg_islands)
+```
+
+### CpG Island Visualization
+
+We can now visualize the number of CpG islands in promoter vs non-promoter regions to see if it varies at all.
+
+```{r}
+barplot(table(promoterdf$num_cpg_islands), main = "CpG Islands in Promoter Regions",
+        xlab = "Number of CpG Islands", ylab = "Count", col = "blue")
+
+# Bar plot for non-promoter regions
+barplot(table(non_promoterdf$num_cpg_islands), main = "CpG Islands in Non-Promoter Regions",
+        xlab = "Number of CpG Islands", ylab = "Count", col = "red")
+```
+
+Based on these bar plots we can see that CpG Islands are MUCH more prevalent in promoter regions while most sequences that are non-promoter regions have 0 CpG islands. Thus, this is a defining characteristic in identifying promoter regions and will make a great feature in our final data set.
+
+## Feature Engineering: Bendability
+
+Now we can explore the other file we downloaded from Kaggle, which contains bendability scores, to see if we can use it as a feature in our model.
+
+Bendability refers to the flexibility of the DNA helix and how easily it can bend or twist. This property is significant because the physical structure of DNA affects how it interacts with proteins, including transcription factors that bind to promoter regions to initiate gene transcription. Regions of DNA with higher bendability may be more accessible for protein binding, thereby playing a critical role in gene regulation. By incorporating bendability scores into our classification model, we can capture structural features of DNA that are relevant for distinguishing promoter regions from non-promoter regions, potentially improving the model's accuracy.
+
+```{r}
+#Creating a variable containing the data because the one read in from Kaggle has some formatting errors
+bendability_data <- read.table(text = "aaa	-0.274
+aac	-0.205
+aag	-0.081
+aat	-0.28
+aca	-0.006
+acc	-0.032
+acg	-0.033
+act	-0.183
+aga	0.027
+agc	0.017
+agg	-0.057
+agt	-0.183
+ata	0.182
+atc	-0.110
+atg	0.134
+att	-0.280
+caa	0.015
+cac	0.040
+cag	0.175
+cat	0.134
+cca	-0.246
+ccc	-0.012
+ccg	-0.136
+cct	-0.057
+cga	-0.003
+cgc	-0.077
+cgg	-0.136
+cgt	-0.033
+cta	0.090
+ctc	0.031
+ctg	0.175
+ctt	-0.081
+gaa	-0.037
+gac	-0.013
+gag	0.031
+gat	-0.110
+gca	0.076
+gcc	0.107
+gcg	-0.077
+gct	0.017
+gga	0.013
+ggc	0.107
+ggg	-0.012
+ggt	-0.032
+gta	0.025
+gtc	-0.013
+gtg	0.040
+gtt	-0.205
+taa	0.068
+tac	0.025
+tag	0.090
+tat	0.182
+tca	0.194
+tcc	0.013
+tcg	-0.003
+tct	0.027
+tga	0.194
+tgc	0.076
+tgg	-0.246
+tgt	-0.006
+tta	0.068
+ttc	-0.037
+ttg	0.015
+ttt	-0.274", header = FALSE, col.names = c("trinucleotide", "bendability"))
+```
+
+```{r}
+#This function will calculate the average bendability of each sequence in our dataset using the bendability scores provided to us
+calculate_bendability <- function(sequence, bendability_data) {
+  score <- 0
+  for (i in 1:(nchar(sequence) - 2)) {
+    trinucleotide <- substr(sequence, i, i + 2)
+    score <- score + bendability_data[bendability_data$trinucleotide == trinucleotide, "bendability"]
+  }
+  return(score)
+}
+
+# Testing Function to make sure the calculate_bendability function accuratley retreives the average bendability for a given sequence
+sequence <- "aacctg"
+bendability_testscore <- calculate_bendability(sequence, bendability_data)
+print(bendability_testscore)
+```
+
+```{r}
+#Applying bendability function to our sequences
+promoterdf$bendability <- sapply(tolower(promoterdf$Promoter.sequences), calculate_bendability, bendability_data = bendability_data)
+non_promoterdf$bendability <- sapply(tolower(non_promoterdf$non.Promoter.sequences), calculate_bendability, bendability_data = bendability_data)
+```
+
+### Visualize Average Bendability
+
+```{r}
+# Convert bendability column to numeric
+promoterdf$bendability <- as.numeric(as.character(promoterdf$bendability))
+non_promoterdf$bendability <- as.numeric(as.character(non_promoterdf$bendability))
+
+# Impute any missing values with the mean
+promoter_mean <- mean(promoterdf$bendability, na.rm = TRUE)
+non_promoter_mean <- mean(non_promoterdf$bendability, na.rm = TRUE)
+
+promoterdf$bendability[is.na(promoterdf$bendability)] <- promoter_mean
+non_promoterdf$bendability[is.na(non_promoterdf$bendability)] <- non_promoter_mean
+
+# Combine the bendability scores from both datasets to determine common limits
+all_bendability <- c(promoterdf$bendability, non_promoterdf$bendability)
+
+# Determine x-axis limits
+xlim_values <- range(all_bendability, na.rm = TRUE)
+
+# Determine y-axis limits by calculating the densities and finding the range
+promoter_density <- density(promoterdf$bendability, na.rm = TRUE)
+non_promoter_density <- density(non_promoterdf$bendability, na.rm = TRUE)
+ylim_values <- range(c(promoter_density$y, non_promoter_density$y), na.rm = TRUE)
+
+# Plot density for promoter regions with common limits
+plot(promoter_density, col = "blue", lwd = 2, main = "Density Plot of Bendability Scores for Promoter Regions",
+     xlab = "Bendability Score", ylab = "Density", xlim = xlim_values, ylim = ylim_values)
+
+# Plot density for non-promoter regions with common limits
+plot(non_promoter_density, col = "red", lwd = 2, main = "Density Plot of Bendability Scores for Non-Promoter Regions",
+     xlab = "Bendability Score", ylab = "Density", xlim = xlim_values, ylim = ylim_values)
+```
+
+Based on these density plots we can conlude that sequences that are not promoter regions have much more variation in there average bendability scores. Sequences that are promoter regions are more concentrated around a score of -5 and have less variation. Based on the differences between average bendability for promoter and non-promoter regions it could be a good feature in our classification model.
+
+## Consolidating Final Data Frame
+
+Now that we have created new features and visualized them to better understand them, we can consolidate it all into our final dataframe that is clean and ready to use to build our models.
+
+```{r}
+#Combining nucleotide proportions with our new features and dropping the column that contains the sequence
+final_promoterdf <- cbind(nprops_promoter, promoterdf)
+final_promoterdf <- final_promoterdf %>% dplyr::select(-Promoter.sequences)
+
+final_nonpromoterdf <- cbind(nprops_nopromoter, non_promoterdf)
+final_nonpromoterdf <- final_nonpromoterdf %>% dplyr::select(-non.Promoter.sequences)
+```
+
+```{r}
+#Adding a target column which is what we are predicting. A 1 being a promoter region and a 0 being a non-promoter region
+final_promoterdf <- final_promoterdf %>%
+  mutate(Target = 1)
+
+final_nonpromoterdf <- final_nonpromoterdf %>%
+  mutate(Target = 0)
+```
+
+```{r}
+#Combining our promoter sequences and non-promoter sequences into one final dataframe
+final_data <- rbind(final_promoterdf, final_nonpromoterdf)
+
+final_data$Target <- as.factor(final_data$Target)
+
+class(final_data$Target)
+```
+
+Now that we have consolidated our data into a single, clean dataframe containing both promoter and non-promoter sequences along with features such as nucleotide proportions, the number of CpG islands, and the average bendability of each sequence, we are ready to begin building our models!
+
+# Setting Up Models
+
+We can now start setting up our models using our newly consolidated data frame.
+
+## Train/Test Split
+
+Before we begin building our models, we will perform a training / testing split on our data. We will do an 80/20 split for this data because the testing data set will still have a significant amount of observations, but our model has more to train on and learn which will help us avoid over-fitting. We will stratify on our outcome variable, *Target*.
+
+```{r}
+final_data <- final_data %>% 
+  rename(T_prop = T) #renamed 'T' column as 'T-prop' to avoid any conflict with built in T keyword in R
+```
+
+```{r}
+set.seed(514)  # setting a seed so the split is the same
+data_split <- final_data %>%
+  initial_split(prop = 0.8, strata = "Target")
+
+data_train <- training(data_split) # training split
+data_test <- testing(data_split) # testing split
+```
+
+```{r}
+dim(data_train)
+dim(data_test)
+```
+
+We can see here after the data split each dataset still has a adequate amount of observations for both training and testing.
+
+## Recipe Building
+
+Here we create a recipe to reuse when building our models and we standardize our predictor variables by centering and scaling them.
+
+```{r}
+promoter_recipe <-   # building the recipe to be used for each model
+  recipe(Target ~ A + C + G + T_prop + num_cpg_islands + bendability,
+         data = data_train) %>% 
+  step_center(all_predictors()) %>%   # standardizing our predictors
+  step_scale(all_predictors())
+```
+
+## K-Fold Cross Validation
+
+We will now use stratified k-fold cross validation, stratifying on the Target variable.
+
+```{r}
+promoter_folds <- vfold_cv(data_train, v = 10, strata = Target)
+```
+
+Here we will save our folds, recipe, and training/testing data to an .rda file so that we can use it in the model building process in a separate R file.
+
+```{r}
+save(promoter_folds, promoter_recipe, data_train, data_test, file = "/Users/kyledesroches/Desktop/PSTAT 131/Final Project/model-setup.rda")
+```
+
+# Building Models
+
+In this stage we will now begin building our models using our recipe created earlier and creating workflows for each model. We will tune hyperparameters through cross validation when necessary. I have decided to build the models in a separate R file since this process takes a bit of code and time to run. After the models have been built I will load them here so we can interpret the results and see which works best. The 5 models I have decided to create are the following: Regularized Logistic Regression (Lasso), LDA, RDA Random Forest, and Support Vector Machine. I first attempted to make a logistic regression model and a QDA model. However, logistic regression struggled because it assumes linear relationships and independence among predictors, which wasn't the case in our dataset. Similarly, QDA, which relies on the assumption of distinct covariance matrices for each class, encountered computational problems. To mitigate these issues, regularization was necessary. So I decided to use regularization techniques, such as Lasso for logistic regression, and regularized covariance estimation for QDA, to help manage multicollinearity and improve model stability by adding penalty terms to the model fitting process.
+
+```{r}
+load("models.rda")
+```
+
+# Model Results
+
+For each model that we were able to tune, we will use the autoplot() function to compare different parameter choices. We will also look at roc_auc metric between models in a table so that we can choose the best model, finalize the workflow, and fit that model with the optimal hyperparameters on the training data.
+
+## Autoplot
+
+In our logistic regression model, we tuned the penalty parameter, which controls the regularization strength. Regularization helps prevent overfitting by penalizing large coefficients. The autoplot function showed that smaller values (mainly values \< 0.100) of the penalty provided the best balance between model complexity and performance, as indicated by the highest ROC AUC scores.
+
+```{r}
+autoplot(tune_results_lasso, metric="roc_auc")
+```
+
+In our RDA model, we tuned the frac_common_cov and frac_identity parameters. The frac_common_cov parameter balances between using class-specific covariance matrices (QDA) and a common covariance matrix (LDA). The frac_identity parameter adds regularization by incorporating a fraction of the identity matrix into the covariance matrices. The autoplot function showed that smaller values of frac_common_cov performed better as well as samller values of frac_identity.
+
+```{r}
+autoplot(rda_tune_results, metric="roc_auc")
+```
+
+For the Random Forest model, we tuned the number of trees, the number of predictors sampled at each split (mtry), and the minimum node size (min_n). The number of trees affects the stability and robustness of the model, mtry influences the diversity of trees, and min_n controls the complexity of the trees. The autoplot function revealed that different combinations of these parameters did not affect ROC AUC scores significantly, as it can be seen there is very little variation in roc_auc among various values of the hyper parameters.
+
+```{r}
+autoplot(tune_results_rf, metric="roc_auc")
+```
+
+In our SVM model, we tuned the cost and RBF sigma parameters. The cost parameter balances model complexity and training error, while the RBF sigma parameter controls the sensitivity of the Gaussian kernel. The autoplot function demonstrated that larger values of cost and sigma maximized the ROC AUC score.
+
+```{r}
+autoplot(svm_tune_results, metric="roc_auc")
+```
+
+## Metrics and Selection
+
+After visualizing how different parameter values affected model performance we can now view all roc_auc metrics in a table and select the optimal hyper parameter values for each tuned model.
+
+### Regularized Logistic Regression (Lasso)
+
+```{r}
+collect_metrics(tune_results_lasso)
+```
+
+```{r}
+# Select the best penalty value
+best_penalty <- select_best(tune_results_lasso, metric = "roc_auc")
+
+# Finalize the workflow with the best penalty value
+final_logistic_wf <- finalize_workflow(
+  logistic_wf,
+  best_penalty
+)
+
+# Fit the final model on the entire training set
+logistic_fit_final <- final_logistic_wf %>%
+  fit(data = data_train)
+```
+
+We can see that our optimal hyper parameter value for our regularized logistic regression model is:
+
+```{r}
+best_penalty
+```
+
+### Regularized Discriminant Analysis
+
+```{r}
+collect_metrics(rda_tune_results) %>% filter(.metric == "roc_auc")
+```
+
+```{r}
+# Select the best combination of hyperparameters based on ROC AUC
+best_params_rda <- select_best(rda_tune_results, metric = "roc_auc")
+
+# Finalize the workflow with the best hyperparameters
+final_rda_wf <- finalize_workflow(
+  rda_wf,
+  best_params_rda
+)
+
+# Fit the final RDA model on the entire training set
+rda_fit_final <- final_rda_wf %>%
+  fit(data = data_train)
+```
+
+We can see that our optimal hyper parameter values for our RDA model are:
+
+```{r}
+best_params_rda
+```
+
+### Random Forest
+
+```{r}
+collect_metrics(tune_results_rf)
+```
+
+```{r}
+# Select the best combination of hyperparameters based on ROC AUC
+best_params_rf <- select_best(tune_results_rf, metric = "roc_auc")
+
+# Finalize the workflow with the best hyperparameters
+final_rf_wf <- finalize_workflow(
+  rf_wf,
+  best_params_rf
+)
+
+# Fit the final Random Forest model on the entire training set
+rf_fit_final <- final_rf_wf %>%
+  fit(data = data_train)
+```
+
+We can see that our optimal hyper parameter values for our random forest model are:
+
+```{r}
+best_params_rf 
+```
+
+### SVM
+
+```{r}
+collect_metrics(svm_tune_results) %>% filter(.metric == "roc_auc")
+```
+
+```{r}
+# Select the best hyperparameters based on ROC AUC
+best_svm <- select_best(svm_tune_results, metric="roc_auc")
+
+# Finalize the workflow with the best hyperparameters
+final_svm_wf <- finalize_workflow (
+  svm_wf, 
+  best_svm
+  )
+
+# Fit the final SVM model on the entire training set
+svm_fit_final <- final_svm_wf %>%
+  fit(data = data_train)
+```
+
+We can see that our optimal hyper parameter values for our SVM are:
+
+```{r}
+best_svm
+```
+
+## Picking Our Best Model(s)
+
+Now that we have our 5 different models each tuned and fitted on the training data we can now compare roc_auc metrics among the 5 different types of models to decide on our best type of model with optimal hyper parameters that we will fit to the testing data to evaluate performance and use to make predictions.
+
+```{r}
+# Retrieve the best ROC AUC values and hyperparameters for each model
+best_roc_auc_rda <- show_best(rda_tune_results, metric = "roc_auc", n = 1)
+
+best_roc_auc_logistic <- show_best(tune_results_lasso, metric = "roc_auc", n = 1)
+
+best_roc_auc_rf <- show_best(tune_results_rf, metric = "roc_auc", n = 1)
+
+best_roc_auc_svm <- show_best(svm_tune_results, metric = "roc_auc", n = 1)
+
+lda_metrics <- collect_metrics(lda_fit)
+lda_roc_auc <- lda_metrics %>%
+  filter(.metric == "roc_auc")
+
+
+# Create a tibble with the best ROC AUC values
+best_roc_auc_tibble <- tibble(
+  Model = c("RDA", "Logistic Regression", "Random Forest", "SVM", "LDA"),
+  ROC_AUC = c(
+    best_roc_auc_rda$mean[1],
+    best_roc_auc_logistic$mean[1],
+    best_roc_auc_rf$mean[1],
+    best_roc_auc_svm$mean[1],
+    lda_roc_auc$mean
+  )
+)
+
+# Rank the models based on their ROC AUC scores
+best_roc_auc_tibble <- best_roc_auc_tibble %>%
+  arrange(desc(ROC_AUC)) %>%
+  mutate(Rank = row_number())
+
+# Print the tibble
+print(best_roc_auc_tibble)
+```
+
+Based on the results, the Random Forest model achieved the highest ROC AUC score, indicating the best performance among our models. However, given the minimal variation observed among the different hyperparameter settings for the Random Forest model as we saw using *autoplot*, I am concerned there may be an issue. To ensure we have found the best model, I will evaluate the top two models—Random Forest and SVM—on the testing data.
+
+# Performance/Results of Our Best Model
+
+Now we can use our best model and make predictions on the testing data. We will then evaluate testing error by looking at the roc_auc and accuracy metrics for the model.
+
+## Random Forest Model
+
+The model we are going to be fitting on our testing data is the random forest model with mtry = 6, trees = 750, and min_n = 4.
+
+This dataframe allows us to compare predictions on the testing set with the actual values.
+
+```{r}
+rf_predictions <- predict(rf_fit_final, new_data = data_test) %>%
+  bind_cols(data_test)
+
+rf_actual_vs_predicted <- data.frame(Predictions = rf_predictions$.pred_class, Actual = rf_predictions$Target)
+
+head(rf_actual_vs_predicted, 50)
+```
+
+First glance at this it seems the predictions were pretty good but let's take a look at some metrics to confirm this.
+
+```{r}
+rf_prob_predictions <- predict(rf_fit_final, new_data = data_test, type = "prob") %>%
+  bind_cols(data_test)
+
+rf_roc_curve <- roc_curve(rf_prob_predictions, truth = Target, .pred_0)
+autoplot(rf_roc_curve) + ggtitle("Random Forest ROC Curve")
+
+rf_roc_auc <- rf_prob_predictions %>%
+  roc_auc(truth = Target, .pred_0)
+
+rf_roc_auc
+
+
+rf_accuracy <- rf_actual_vs_predicted %>%
+  accuracy(truth = Actual, estimate = Predictions)
+
+rf_accuracy
+```
+
+Looking at the ROC curve it seems this model did very well in predicting the testing set. ROC_AUC is about 0.99 and accuracy is around 0.97 which are great.
+
+Of all the models we fit our random forest was best as it performed best on the training data based on the ROC AUC metric and performed extremely well on the testing data as well with high ROC_AUC and accuracy!
+
+# Conclusion
+
+In this project, I explored various machine learning models to classify DNA sequences as promoter or non-promoter regions. The models I tested included Regularized Logistic Regression, LDA, RDA, Random Forest, and SVM. Among these, the Random Forest model stood out with the best performance, achieving high accuracy and a solid ROC AUC score. The SVM model also performed well, but not as well as Random Forest. The logistic regression, LDA, and RDA models provided useful baselines, but their performance was not as strong in comparison.
+
+Reflecting on the project, I realized that my limited biological domain knowledge might have hindered the feature engineering process. Without a deep understanding of the biological mechanisms behind promoter regions, the features I created might not have captured all the relevant information. If I had a better grasp of the biology, I could have engineered more accurate and meaningful features. Moreover, instead of manually engineering features, another approach could have been to use deep learning models to interpret the raw DNA sequences directly. Models like convolutional neural networks (CNNs) or recurrent neural networks (RNNs) are well-suited for handling long strings of nucleotides and could potentially make more accurate predictions by learning directly from the sequences. This project has helped me realize the importance of integrating domain knowledge with machine learning techniques and has got me excited to do further research into the world of bioinformatics!

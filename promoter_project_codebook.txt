@@ -1,0 +1,9 @@
+Name / Data Type / Description
+-----------------------------
+A / continuous / Proportion of Adenine in DNA sequence
+C / continuous / Proportion of Cytosine in DNA sequence
+G / continuous / Proportion of Guanine in DNA sequence
+T / continuous / Proportion of Thymine in DNA sequence
+num_cpg_islands / discrete / Number of CpG islands in the sequence
+bendability / continuous / grams / average bendability of the DNA sequence
+Target / discrete / Binary Variable (0 for non promoter, 1 for promoter)
