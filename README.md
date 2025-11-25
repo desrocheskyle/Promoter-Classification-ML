@@ -1,6 +1,6 @@
 # 🧬 Bioinformatics ML: Promoter Region Classification
 
-**A Classification Project showcasing Data Science techniques to identify promoter regions in DNA sequences.
+A Classification Project showcasing Data Science techniques to identify promoter regions in DNA sequences.
 ## 🎯 Project Goal
 The objective of this project was to develop a high-accuracy Machine Learning model to classify DNA sequences as either **promoter regions** or **non-promoter regions**. Promoter regions are critical sequences near transcription start sites that regulate gene transcription.
 
@@ -10,7 +10,7 @@ The objective of this project was to develop a high-accuracy Machine Learning mo
 | **[Winning Model Name]** | **ROC AUC** | **[Insert Your Best Score]** |
 | [Second Best Model] | ROC AUC | [Insert Second Best Score] |
 
-[Link to Full Report](final_report/promoterclassification.html)
+[Link to Full Report](promoterclassification.html)
 ---
 
 ## 🔬 Data Science Methodology
